@@ -26,7 +26,7 @@ A Next.js application demonstrating gasless cross-chain token transfers from Arb
 
 ### Prerequisites
 
-- Node.js 18+ 
+- Node.js 20+ (required by `@chainlink/ccip-sdk`; 24+ recommended)
 - Git
 - An Alchemy API key
 - Test tokens on Arbitrum Sepolia
@@ -48,6 +48,7 @@ A Next.js application demonstrating gasless cross-chain token transfers from Arb
    Create a `.env.local` file:
    ```env
    NEXT_PUBLIC_ALCHEMY_API_KEY=your_alchemy_api_key_here
+   NEXT_PUBLIC_ALCHEMY_POLICY_ID=your_gas_sponsorship_policy_id_here
    NEXT_PUBLIC_WC_PROJECT_ID=your_walletconnect_project_id_here
    ```
 
@@ -93,25 +94,29 @@ A Next.js application demonstrating gasless cross-chain token transfers from Arb
 
 ## 🔗 Smart Contract Integration
 
-### CCIP Message Structure
-```typescript
-const ccipMessage = {
-  receiver: destinationAddress,     // Padded to 32 bytes
-  data: '0x',                      // Empty for token transfers
-  tokenAmounts: [{
-    token: tokenAddress,           // USDC or CCIP-BnM
-    amount: weiAmount             // Amount in smallest unit
-  }],
-  feeToken: '0x000...000',        // Pay fees in native ETH
-  extraArgs: '0x'                 // Additional CCIP parameters
-};
-```
+### CCIP SDK Integration
+
+All CCIP logic lives in `lib/ccip/` and uses the official [CCIP SDK](https://docs.chain.link/ccip/tools/sdk/) (`@chainlink/ccip-sdk`) and [CCIP API v2](https://docs.chain.link/ccip/tools/api/):
+
+| File | Purpose |
+|------|---------|
+| `config.ts` | Lane config: router, chain selectors (from the SDK's network registry), tokens |
+| `transfer.ts` | Wallet-agnostic helpers: `quoteFee`, `buildTransferCalls`, `getMessageIds` |
+| `useCCIPTransfer.ts` | React hook: balance check → SDK-built calls → one sponsored batch |
+| `useMessageStatus.ts` | Polls the CCIP API for message status until delivered or failed |
+| `sdk.ts` | EVM-only SDK imports (keeps non-EVM chain code out of the browser bundle) |
+
+`buildTransferCalls` uses the SDK's `generateUnsignedSendMessage`, which returns any needed ERC-20
+approvals followed by `ccipSend` as plain `{to, data, value}` calls. These are sent as **one batched,
+gas-sponsored transaction** from the smart account. `extraArgs` are left to the SDK, which picks the
+right encoding for the lane (including `GenericExtraArgsV3` on CCIP 2.0 lanes).
 
 ### Account Abstraction Flow
 1. User initiates transfer (no direct wallet interaction)
-2. Smart account handles token approval
-3. Smart account executes CCIP transfer
-4. All gas fees sponsored by the application
+2. Smart account batches the token approval (if needed) and the CCIP send into one operation
+3. All gas fees sponsored by the application's Alchemy policy
+4. **Note:** the CCIP protocol fee is paid in native ETH from the smart account, so the account
+   needs a small Arbitrum Sepolia ETH balance. Gas sponsorship doesn't cover the CCIP fee.
 
 ## 🌐 Supported Networks
 
@@ -123,8 +128,8 @@ const ccipMessage = {
 ## 📊 Monitoring & Analytics
 
 ### CCIP Explorer Integration
-- **Direct Links**: Automatic links to transaction details
-- **Real-time Status**: Track message state across chains
+- **Direct Links**: Links to the CCIP message (by message ID) on CCIP Explorer
+- **Real-time Status**: In-app status from the CCIP API (sent → verified → delivered)
 - **Transfer Time**: Typically 10-20 minutes for completion
 
 ### Transaction Flow
